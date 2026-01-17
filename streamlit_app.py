@@ -24,7 +24,7 @@ edited_skills = st.data_editor(st.session_state.df_skills, hide_index=True)
 if st.button("✨ シフトを自動生成"):
     num_days = calendar.monthrange(year, month)[1]
     dates = [datetime(year, month, d) for d in range(1, num_days + 1)]
-    holidays = [11, 23] # 2026年2月
+    holidays = [11, 23] # 2026年2月の祝日
     
     duty_counts = {s: 0 for s in staff_list}
     schedule = {s: [""] * num_days for s in staff_list}
@@ -39,21 +39,21 @@ if st.button("✨ シフトを自動生成"):
         for duty in daily_duties:
             candidates = []
             for s in staff_list:
-                # 【最優先】当直明け判定
+                # 当直明け判定
                 if d_idx > 0 and schedule[s][d_idx-1] == "当直":
-                    schedule[s][d_idx] = "○"
-                    # 土日祝が明け(○)で潰れた場合の代休補填
-                    if is_holiday:
-                        workdays = [i for i, d in enumerate(dates) if d.weekday() < 5 and d.day not in holidays]
-                        random.shuffle(workdays)
-                        for f_idx in workdays:
-                            # まだ何も予定がない（空欄）の日だけを探して予約
-                            if schedule[s][f_idx] == "" and f_idx > d_idx:
-                                schedule[s][f_idx] = f"◎({date.day}明)"
-                                break
+                    if schedule[s][d_idx] == "": # まだ「○」が入っていない場合のみ
+                        schedule[s][d_idx] = "○"
+                        # 土日祝が明け(○)になった場合の代休補填
+                        if is_holiday:
+                            workdays = [i for i, d in enumerate(dates) if d.weekday() < 5 and d.day not in holidays]
+                            random.shuffle(workdays)
+                            for f_idx in workdays:
+                                if schedule[s][f_idx] == "" and f_idx > d_idx:
+                                    schedule[s][f_idx] = f"◎({date.day}明)"
+                                    break
                     continue
                 
-                # 既に何かが埋まっている（代休予約済みなど）場合はスキップ
+                # 既に埋まっている場合はスキップ
                 if schedule[s][d_idx] != "": continue
                 
                 skill_col = "当直" if duty == "日勤" else duty
@@ -76,12 +76,11 @@ if st.button("✨ シフトを自動生成"):
                     workdays = [i for i, d in enumerate(dates) if d.weekday() < 5 and d.day not in holidays]
                     random.shuffle(workdays)
                     for f_idx in workdays:
-                        # まだ何も予定がなく、かつ当日ではない日
+                        # まだ何も予定がなく、かつ当日ではない
                         if schedule[chosen][f_idx] == "" and f_idx != d_idx:
                             schedule[chosen][f_idx] = f"◎({date.day})"
                             assigned_daikyu = True
                             break
-                    # 平日が埋まっている場合は全日程から探す
                     if not assigned_daikyu:
                         all_days = list(range(num_days))
                         random.shuffle(all_days)
@@ -90,13 +89,12 @@ if st.button("✨ シフトを自動生成"):
                                 schedule[chosen][f_idx] = f"◎({date.day})"
                                 break
 
-    # 2. 仕上げ（空欄を × または - で埋める）
+    # 2. 仕上げ
     off_counts = {s: 0 for s in staff_list}
     for s in staff_list:
         for d_idx in range(num_days):
             if schedule[s][d_idx] == "":
                 schedule[s][d_idx] = "×" if (dates[d_idx].weekday() >= 5 or dates[d_idx].day in holidays) else "-"
-            # 休みとしてカウント
             if "◎" in schedule[s][d_idx] or schedule[s][d_idx] == "×":
                 off_counts[s] += 1
 
