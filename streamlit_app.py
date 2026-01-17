@@ -12,30 +12,25 @@ with st.sidebar:
     st.header("📅 基本設定")
     year = st.number_input("年", value=2026)
     month = st.number_input("月", min_value=1, max_value=12, value=2)
-    
-    st.header("👥 スタッフ一括登録")
-    default_staff = "\n".join([f"スタッフ{i}" for i in range(1, 53)])
-    staff_input = st.text_area("名前を改行区切りで入力", height=200, value=default_staff)
+    staff_input = st.text_area("名前を改行区切りで入力", height=200, value="\n".join([f"スタッフ{i}" for i in range(1, 53)]))
 
 staff_list = [s.strip() for s in staff_input.split('\n') if s.strip()]
 
 # --- 業務スキル設定 ---
 if 'df_skills' not in st.session_state or len(st.session_state.df_skills) != len(staff_list):
-    default_skills = [{"名前": s, "1st": True, "2nd": True, "当直": True, "延長": True, "CT": True, "MRI": True} for s in staff_list]
-    st.session_state.df_skills = pd.DataFrame(default_skills)
-
+    st.session_state.df_skills = pd.DataFrame([{"名前": s, "1st": True, "2nd": True, "当直": True, "延長": True, "CT": True, "MRI": True} for s in staff_list])
 edited_skills = st.data_editor(st.session_state.df_skills, hide_index=True)
 
-# --- 生成ロジック ---
 if st.button("✨ シフトを自動生成"):
     num_days = calendar.monthrange(year, month)[1]
     dates = [datetime(year, month, d) for d in range(1, num_days + 1)]
-    holidays = [11, 23] # 2026年2月の祝日
+    holidays = [11, 23] # 2026年2月
     
     duty_counts = {s: 0 for s in staff_list}
     schedule = {s: [""] * num_days for s in staff_list}
     last_duty_idx = {s: -2 for s in staff_list}
 
+    # 1. メインの当番割り当て
     for d_idx in range(num_days):
         date = dates[d_idx]
         is_holiday = date.weekday() >= 5 or (date.day in holidays)
@@ -63,45 +58,39 @@ if st.button("✨ シフトを自動生成"):
                 duty_counts[chosen] += 1
                 last_duty_idx[chosen] = d_idx
                 
+                # 【修正：代休保証ロジック】
                 if is_holiday and duty in ["当直", "日勤"]:
-                    for f_idx in range(num_days):
-                        f_date = dates[f_idx]
-                        if f_date.weekday() < 5 and f_date.day not in holidays:
+                    assigned_daikyu = False
+                    # まずは「月内の平日」から探す
+                    workdays = [i for i, d in enumerate(dates) if d.weekday() < 5 and d.day not in holidays]
+                    random.shuffle(workdays)
+                    for f_idx in workdays:
+                        if schedule[chosen][f_idx] == "" and f_idx != d_idx:
+                            schedule[chosen][f_idx] = f"◎({date.day})"
+                            assigned_daikyu = True
+                            break
+                    
+                    # 平日に空きがない場合、土日祝からでも空いている日を探して「◎」にする（休みを絶対保証）
+                    if not assigned_daikyu:
+                        all_days = list(range(num_days))
+                        random.shuffle(all_days)
+                        for f_idx in all_days:
                             if schedule[chosen][f_idx] == "" and f_idx != d_idx:
                                 schedule[chosen][f_idx] = f"◎({date.day})"
                                 break
 
-    # 休み（×・-）の埋め合わせとカウント
+    # 2. 仕上げ（×と-）とカウント
     off_counts = {s: 0 for s in staff_list}
     for s in staff_list:
         for d_idx in range(num_days):
-            val = schedule[s][d_idx]
-            if val == "":
-                date = dates[d_idx]
-                is_holiday = date.weekday() >= 5 or (date.day in holidays)
-                schedule[s][d_idx] = "×" if is_holiday else "-"
-            
-            # ◎（代休）または ×（休日）をカウント
+            if schedule[s][d_idx] == "":
+                schedule[s][d_idx] = "×" if (dates[d_idx].weekday() >= 5 or dates[d_idx].day in holidays) else "-"
             if "◎" in schedule[s][d_idx] or schedule[s][d_idx] == "×":
                 off_counts[s] += 1
 
-    res_df = pd.DataFrame(schedule, index=[d.strftime("%d(%a)") for d in dates]).T
     st.subheader("📋 シフト表")
-    st.dataframe(res_df)
-
-    # --- カウント結果の表示 ---
-    st.subheader("📊 休み数・当番数の集計")
-    col1, col2 = st.columns(2)
-    with col1:
-        st.write("各スタッフの休み合計（◎ + ×）")
-        st.bar_chart(pd.Series(off_counts))
-    with col2:
-        st.write("当番回数（平等性の確認）")
-        st.bar_chart(pd.Series(duty_counts))
+    st.dataframe(pd.DataFrame(schedule, index=[d.strftime("%d(%a)") for d in dates]).T)
     
-    # 詳細テーブル
-    summary_df = pd.DataFrame({
-        "当番回数": pd.Series(duty_counts),
-        "休み合計(◎+×)": pd.Series(off_counts)
-    })
-    st.table(summary_df)
+    st.subheader("📊 集計 (休み合計 ◎+×)")
+    summary_df = pd.DataFrame({"当番": pd.Series(duty_counts), "休み": pd.Series(off_counts)})
+    st.table(summary_df.T)
