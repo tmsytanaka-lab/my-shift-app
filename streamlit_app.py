@@ -39,11 +39,9 @@ if st.button("✨ シフトを自動生成"):
         for duty in daily_duties:
             candidates = []
             for s in staff_list:
-                # 当直明け判定
                 if d_idx > 0 and schedule[s][d_idx-1] == "当直":
-                    if schedule[s][d_idx] == "": # まだ「○」が入っていない場合のみ
+                    if schedule[s][d_idx] == "":
                         schedule[s][d_idx] = "○"
-                        # 土日祝が明け(○)になった場合の代休補填
                         if is_holiday:
                             workdays = [i for i, d in enumerate(dates) if d.weekday() < 5 and d.day not in holidays]
                             random.shuffle(workdays)
@@ -52,10 +50,7 @@ if st.button("✨ シフトを自動生成"):
                                     schedule[s][f_idx] = f"◎({date.day}明)"
                                     break
                     continue
-                
-                # 既に埋まっている場合はスキップ
                 if schedule[s][d_idx] != "": continue
-                
                 skill_col = "当直" if duty == "日勤" else duty
                 if edited_skills.loc[edited_skills["名前"] == s, skill_col].values[0]:
                     if last_duty_idx[s] < d_idx - 1:
@@ -63,42 +58,50 @@ if st.button("✨ シフトを自動生成"):
             
             random.shuffle(candidates)
             candidates.sort(key=lambda x: duty_counts[x])
-            
             if candidates:
                 chosen = candidates[0]
                 schedule[chosen][d_idx] = duty
                 duty_counts[chosen] += 1
                 last_duty_idx[chosen] = d_idx
                 
-                # 土日祝当番に対する代休予約
                 if is_holiday and duty in ["当直", "日勤"]:
                     assigned_daikyu = False
                     workdays = [i for i, d in enumerate(dates) if d.weekday() < 5 and d.day not in holidays]
                     random.shuffle(workdays)
                     for f_idx in workdays:
-                        # まだ何も予定がなく、かつ当日ではない
                         if schedule[chosen][f_idx] == "" and f_idx != d_idx:
                             schedule[chosen][f_idx] = f"◎({date.day})"
                             assigned_daikyu = True
                             break
                     if not assigned_daikyu:
-                        all_days = list(range(num_days))
+                        all_days = [i for i in range(num_days) if i != d_idx]
                         random.shuffle(all_days)
                         for f_idx in all_days:
-                            if schedule[chosen][f_idx] == "" and f_idx != d_idx:
+                            if schedule[chosen][f_idx] == "":
                                 schedule[chosen][f_idx] = f"◎({date.day})"
                                 break
 
-    # 2. 仕上げ
+    # 2. 仕上げとカウント
     off_counts = {s: 0 for s in staff_list}
+    daily_off_counts = [0] * num_days # 日ごとの休み数
+
     for s in staff_list:
         for d_idx in range(num_days):
             if schedule[s][d_idx] == "":
                 schedule[s][d_idx] = "×" if (dates[d_idx].weekday() >= 5 or dates[d_idx].day in holidays) else "-"
+            
             if "◎" in schedule[s][d_idx] or schedule[s][d_idx] == "×":
                 off_counts[s] += 1
+                daily_off_counts[d_idx] += 1
+
+    # データフレーム化
+    res_df = pd.DataFrame(schedule, index=[d.strftime("%d(%a)") for d in dates]).T
+    
+    # 【追加】日ごとの休み合計を一番下の行に追加
+    res_df.loc["休日合計 (◎+×)"] = daily_off_counts
 
     st.subheader("📋 シフト表")
-    st.dataframe(pd.DataFrame(schedule, index=[d.strftime("%d(%a)") for d in dates]).T)
+    st.dataframe(res_df)
+    
     st.subheader("📊 集計 (休み合計 ◎+×)")
     st.table(pd.DataFrame({"当番": pd.Series(duty_counts), "休み": pd.Series(off_counts)}).T)
