@@ -24,11 +24,14 @@ edited_skills = st.data_editor(st.session_state.df_skills, hide_index=True)
 if st.button("✨ シフトを自動生成"):
     num_days = calendar.monthrange(year, month)[1]
     dates = [datetime(year, month, d) for d in range(1, num_days + 1)]
-    holidays = [11, 23] # 2026年2月の祝日
+    holidays = [11, 23] # 2026年2月
     
     duty_counts = {s: 0 for s in staff_list}
     schedule = {s: [""] * num_days for s in staff_list}
     last_duty_idx = {s: -2 for s in staff_list}
+    
+    # 日ごとの休み(◎, ○)の予約数を管理
+    daily_off_reserved = [0] * num_days
 
     # 1. メインの当番割り当て
     for d_idx in range(num_days):
@@ -43,12 +46,16 @@ if st.button("✨ シフトを自動生成"):
                 if d_idx > 0 and schedule[s][d_idx-1] == "当直":
                     if schedule[s][d_idx] == "":
                         schedule[s][d_idx] = "○"
+                        daily_off_reserved[d_idx] += 1
+                        # 土日祝明けの代休補填
                         if is_holiday:
                             workdays = [i for i, d in enumerate(dates) if d.weekday() < 5 and d.day not in holidays]
                             random.shuffle(workdays)
                             for f_idx in workdays:
-                                if schedule[s][f_idx] == "" and f_idx > d_idx:
+                                # 平日の休みが3人を超えない日を探す
+                                if schedule[s][f_idx] == "" and f_idx > d_idx and daily_off_reserved[f_idx] < 3:
                                     schedule[s][f_idx] = f"◎({date.day}明)"
+                                    daily_off_reserved[f_idx] += 1
                                     break
                     continue
                 
@@ -66,37 +73,38 @@ if st.button("✨ シフトを自動生成"):
                 duty_counts[chosen] += 1
                 last_duty_idx[chosen] = d_idx
                 
+                # 土日祝当番に対する代休予約
                 if is_holiday and duty in ["当直", "日勤"]:
                     workdays = [i for i, d in enumerate(dates) if d.weekday() < 5 and d.day not in holidays]
                     random.shuffle(workdays)
                     for f_idx in workdays:
-                        if schedule[chosen][f_idx] == "" and f_idx != d_idx:
+                        # 平日の休み人数がすでに3人未満の日を優先
+                        if schedule[chosen][f_idx] == "" and f_idx != d_idx and daily_off_reserved[f_idx] < 3:
                             schedule[chosen][f_idx] = f"◎({date.day})"
+                            daily_off_reserved[f_idx] += 1
                             break
 
-    # 2. 仕上げと「休日合計」の計算
+    # 2. 仕上げと計算
     off_counts = {s: 0 for s in staff_list}
-    daily_off_total = [0] * num_days # 日ごとの休日数（◎, ×, ○）
+    daily_off_total = [0] * num_days
 
     for s in staff_list:
         for d_idx in range(num_days):
             if schedule[s][d_idx] == "":
                 schedule[s][d_idx] = "×" if (dates[d_idx].weekday() >= 5 or dates[d_idx].day in holidays) else "-"
             
-            # 【修正】◎, ×, ○ のいずれかであれば「休日合計」としてカウント
             cell_val = str(schedule[s][d_idx])
             if "◎" in cell_val or "×" in cell_val or "○" in cell_val:
                 daily_off_total[d_idx] += 1
-                # スタッフ個人の休み数集計（◎と×のみを休みとしてカウントしたい場合はここを調整）
                 if "◎" in cell_val or "×" in cell_val:
                     off_counts[s] += 1
 
     res_df = pd.DataFrame(schedule, index=[d.strftime("%d(%a)") for d in dates]).T
-    
-    # シフト表の最下行に「休日合計 (◎+×+○)」を追加
     res_df.loc["休日合計 (◎+×+○)"] = daily_off_total
 
     st.subheader("📋 シフト表")
     st.dataframe(res_df)
     
-    st
+    st.subheader("📊 集計")
+    summary_df = pd.DataFrame({"当番": pd.Series(duty_counts), "休み": pd.Series(off_counts)})
+    st.table(summary_df.T)
