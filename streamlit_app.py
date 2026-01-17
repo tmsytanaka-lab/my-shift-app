@@ -13,7 +13,7 @@ with st.sidebar:
     month = st.number_input("月", min_value=1, max_value=12, value=2)
     
     st.header("👥 スタッフ一括登録")
-    # 初期値。ここを52名分に書き換えてください。
+    # 52名分のデフォルトリスト
     default_staff = "\n".join([f"スタッフ{i}" for i in range(1, 53)])
     staff_input = st.text_area("名前を改行区切りで入力", height=200, value=default_staff)
 
@@ -32,13 +32,18 @@ if st.button("✨ シフトを自動生成"):
     num_days = calendar.monthrange(year, month)[1]
     dates = [datetime(year, month, d) for d in range(1, num_days + 1)]
     
+    # 日本の祝日（2026年2月用：11日 建国記念の日）
+    holidays = [11] 
+    
     duty_counts = {s: 0 for s in staff_list}
     schedule = {s: [""] * num_days for s in staff_list}
     last_duty_idx = {s: -2 for s in staff_list}
 
     for d_idx in range(num_days):
         date = dates[d_idx]
-        is_holiday = date.weekday() >= 5
+        # 土日または祝日判定
+        is_holiday = date.weekday() >= 5 or (date.day in holidays)
+        
         daily_duties = ["1st", "2nd", "当直", "日勤"] if is_holiday else ["1st", "2nd", "当直", "延長", "CT", "MRI"]
 
         for duty in daily_duties:
@@ -49,6 +54,7 @@ if st.button("✨ シフトを自動生成"):
                     schedule[s][d_idx] = "明"
                     continue
                 
+                # 既に代休(◎)などが予約されている場合はスキップ
                 if schedule[s][d_idx] != "": continue
                 
                 skill_col = "当直" if duty == "日勤" else duty
@@ -66,22 +72,37 @@ if st.button("✨ シフトを自動生成"):
                 
                 # 【代休予約】土日祝の当直・日勤
                 if is_holiday and duty in ["当直", "日勤"]:
+                    assigned_daikyu = False
+                    # 翌日以降の「平日かつ非祝日」を探して◎を入れる
                     for f_idx in range(d_idx + 1, num_days):
-                        # 平日かつ空欄の日を探して予約
-                        if dates[f_idx].weekday() < 5 and schedule[chosen][f_idx] == "":
+                        f_date = dates[f_idx]
+                        f_is_workday = f_date.weekday() < 5 and (f_date.day not in holidays)
+                        if f_is_workday and schedule[chosen][f_idx] == "":
                             schedule[chosen][f_idx] = "◎"
+                            assigned_daikyu = True
                             break
+                    # 月内に平日空きがない場合（月末など）は、暫定的にどこかへ入れる処理
+                    if not assigned_daikyu:
+                        pass 
 
-    # 空欄を「×」または「-」で埋める
+    # 最終仕上げ：空欄を「×」または「-」で埋める
     for s in staff_list:
         for d_idx in range(num_days):
             if schedule[s][d_idx] == "":
-                schedule[s][d_idx] = "×" if dates[d_idx].weekday() >= 5 else "-"
+                date = dates[d_idx]
+                is_holiday = date.weekday() >= 5 or (date.day in holidays)
+                schedule[s][d_idx] = "×" if is_holiday else "-"
 
     res_df = pd.DataFrame(schedule, index=[d.strftime("%d(%a)") for d in dates]).T
     st.subheader("📋 生成されたシフト表")
-    # エラー回避のため色付けなしのシンプルな表示に変更
-    st.dataframe(res_df)
+    # 背景色をつけて見やすくする（代休は薄緑、当直は薄赤）
+    def color_coding(val):
+        if val == "◎": return "background-color: #d4edda"
+        if val == "当直": return "background-color: #f8d7da"
+        if val == "×": return "color: #ff0000"
+        return ""
+    
+    st.dataframe(res_df.style.applymap(color_coding))
     
     st.subheader("📊 当番回数の集計")
     st.bar_chart(pd.Series(duty_counts))
